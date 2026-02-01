@@ -1,0 +1,75 @@
+name: Daily Startup News Digest
+
+on:
+  # 毎日日本時間 8:00 AM (UTC 23:00 前日) に実行
+  schedule:
+    - cron: '0 23 * * *'
+
+  # 手動実行も可能
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Execution mode'
+        required: true
+        default: 'digest'
+        type: choice
+        options:
+          - digest
+          - collect
+          - test-email
+
+jobs:
+  run-digest:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Create data directory
+        run: mkdir -p data
+
+      - name: Run digest
+        env:
+          # Claude API
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+          # Email (Resend)
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+
+          # Optional: 有料サービス認証情報
+          NIKKEI_EMAIL: ${{ secrets.NIKKEI_EMAIL }}
+          NIKKEI_PASSWORD: ${{ secrets.NIKKEI_PASSWORD }}
+          CRUNCHBASE_API_KEY: ${{ secrets.CRUNCHBASE_API_KEY }}
+          NEWSPICKS_EMAIL: ${{ secrets.NEWSPICKS_EMAIL }}
+          NEWSPICKS_PASSWORD: ${{ secrets.NEWSPICKS_PASSWORD }}
+
+        run: |
+          python -m src.main --mode ${{ github.event.inputs.mode || 'digest' }}
+
+      - name: Upload database artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: database-${{ github.run_number }}
+          path: data/startup_news.db
+          retention-days: 7
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "Daily digest failed! Check the logs for details."
+          # ここにSlack通知などを追加可能

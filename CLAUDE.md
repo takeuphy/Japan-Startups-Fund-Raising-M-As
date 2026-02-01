@@ -5,32 +5,72 @@ This document provides guidance for AI assistants working with this repository.
 ## Project Overview
 
 **Repository**: Japan-Startups-Fund-Raising-M-As
-**Purpose**: Analysis of Japanese startup fund-raising activities and mergers & acquisitions (M&A) data
+**Purpose**: Automated collection and daily digest of Japanese startup fund-raising and M&A news
 
-This project focuses on collecting, analyzing, and visualizing data related to:
-- Japanese startup funding rounds and investment trends
-- Mergers and acquisitions involving Japanese startups
-- Investor patterns and deal flow analysis
-- Market insights for the Japanese startup ecosystem
+This project:
+- Collects news from multiple sources (PR TIMES, TechCrunch Japan, Nikkei, NewsPicks, INITIAL, Crunchbase)
+- Uses Claude API to summarize and structure deal information
+- Sends daily email digests via Resend
+- Runs automatically via GitHub Actions
 
 ## Repository Structure
 
 ```
 Japan-Startups-Fund-Raising-M-As/
-├── CLAUDE.md           # This file - AI assistant guidelines
-├── README.md           # Project documentation (to be created)
-├── data/               # Data files (CSV, JSON, etc.)
-│   ├── raw/            # Original unprocessed data
-│   └── processed/      # Cleaned and transformed data
-├── src/                # Source code
-│   ├── analysis/       # Analysis scripts
-│   ├── scrapers/       # Data collection scripts
-│   └── utils/          # Utility functions
-├── notebooks/          # Jupyter notebooks for exploration
-├── tests/              # Test files
-├── docs/               # Additional documentation
-└── output/             # Generated reports and visualizations
+├── .github/
+│   └── workflows/
+│       └── daily_digest.yml    # GitHub Actions (毎日 JST 8:00 実行)
+├── config/
+│   ├── __init__.py
+│   └── settings.py             # Pydantic settings (環境変数管理)
+├── data/                       # SQLite データベース保存先
+├── src/
+│   ├── __init__.py
+│   ├── main.py                 # エントリーポイント
+│   ├── models/
+│   │   ├── __init__.py
+│   │   └── article.py          # Article, DealSummary モデル
+│   ├── scrapers/
+│   │   ├── __init__.py
+│   │   ├── base.py             # BaseScraper 基底クラス
+│   │   ├── prtimes.py          # PR TIMES スクレイパー
+│   │   ├── techcrunch_jp.py    # TechCrunch Japan (RSS)
+│   │   ├── nikkei.py           # 日経新聞 (有料対応)
+│   │   ├── newspicks.py        # NewsPicks (有料対応)
+│   │   ├── initial_inc.py      # INITIAL
+│   │   └── crunchbase.py       # Crunchbase API
+│   ├── services/
+│   │   ├── __init__.py
+│   │   ├── collector.py        # 全スクレイパー統合
+│   │   ├── summarizer.py       # Claude API 要約
+│   │   └── email_sender.py     # Resend メール送信
+│   └── utils/
+│       └── __init__.py
+├── templates/
+│   └── digest_email.html       # Jinja2 メールテンプレート
+├── tests/                      # pytest テスト
+├── .env.example                # 環境変数サンプル
+├── .gitignore
+├── requirements.txt
+├── README.md
+└── CLAUDE.md                   # このファイル
 ```
+
+## Key Files
+
+### Entry Point
+- `src/main.py` - CLI with `--mode digest|collect|test-email`
+
+### Data Models
+- `src/models/article.py` - `Article`, `ArticleDB`, `DealSummary`, `DealType`, `FundingRound`
+
+### Core Services
+- `src/services/collector.py` - `CollectorService` orchestrates all scrapers
+- `src/services/summarizer.py` - `SummarizerService` uses Claude API
+- `src/services/email_sender.py` - `EmailService` uses Resend API
+
+### Configuration
+- `config/settings.py` - Pydantic `Settings` class loads from `.env`
 
 ## Development Guidelines
 
@@ -38,40 +78,57 @@ Japan-Startups-Fund-Raising-M-As/
 
 - **Python**: Follow PEP 8 conventions
   - Use 4 spaces for indentation
-  - Maximum line length: 88 characters (Black formatter compatible)
+  - Maximum line length: 88 characters (Black formatter)
   - Use type hints for function signatures
   - Write docstrings for all public functions and classes
 
-- **Data Files**:
-  - Use UTF-8 encoding for all text files
-  - CSV files should include headers
-  - JSON files should be properly formatted
-  - Date format: ISO 8601 (YYYY-MM-DD)
-  - Currency: JPY (Japanese Yen) as default, with explicit notation when using other currencies
+### Running Locally
 
-### Naming Conventions
+```bash
+# Setup
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+# Edit .env with your API keys
 
-- **Files**: Use snake_case for Python files and data files
-  - Example: `startup_funding_analysis.py`, `ma_deals_2024.csv`
-- **Variables**: Use snake_case
-- **Classes**: Use PascalCase
-- **Constants**: Use UPPER_SNAKE_CASE
-- **Data columns**: Use snake_case with descriptive names
-  - Example: `company_name`, `funding_amount_jpy`, `deal_date`
+# Run modes
+python -m src.main --mode collect     # データ収集のみ
+python -m src.main --mode test-email  # メールテスト
+python -m src.main --mode digest      # フル実行
+```
 
-### Japanese Language Handling
+### Adding a New Scraper
 
-- Store Japanese text in UTF-8 encoding
-- Maintain both Japanese original names and romanized versions where applicable
-- Use ISO 3166-1 codes for country references (JP for Japan)
-- Prefecture names should be stored in both kanji and romaji
+1. Create `src/scrapers/new_source.py`
+2. Inherit from `BaseScraper`
+3. Implement `scrape(since: datetime) -> List[Article]`
+4. Export in `src/scrapers/__init__.py`
+5. Add to `CollectorService.__init__()` in `src/services/collector.py`
 
-### Data Integrity
+Example:
+```python
+class NewSourceScraper(BaseScraper):
+    source_name = "New Source"
+    base_url = "https://example.com"
 
-- Always preserve original data in `data/raw/`
-- Document all data transformations
-- Include data sources and collection dates in metadata
-- Handle missing values explicitly (use `None`/`null`, not empty strings)
+    def scrape(self, since: Optional[datetime] = None) -> List[Article]:
+        # Implementation
+        pass
+```
+
+### Environment Variables
+
+Required:
+- `ANTHROPIC_API_KEY` - Claude API key
+- `RESEND_API_KEY` - Resend API key
+- `EMAIL_FROM` - Sender email
+- `EMAIL_TO` - Recipient email(s)
+
+Optional:
+- `CRUNCHBASE_API_KEY` - Crunchbase API key
+- `NIKKEI_EMAIL`, `NIKKEI_PASSWORD` - Nikkei credentials
+- `NEWSPICKS_EMAIL`, `NEWSPICKS_PASSWORD` - NewsPicks credentials
 
 ## Git Workflow
 
@@ -79,115 +136,85 @@ Japan-Startups-Fund-Raising-M-As/
 
 - Feature branches: `feature/<description>`
 - Bug fixes: `fix/<description>`
-- Data updates: `data/<description>`
 - Documentation: `docs/<description>`
 
 ### Commit Messages
 
-Follow conventional commits format:
-- `feat:` New feature or analysis
+Follow conventional commits:
+- `feat:` New feature
 - `fix:` Bug fix
-- `data:` Data updates or additions
-- `docs:` Documentation changes
+- `docs:` Documentation
 - `refactor:` Code refactoring
-- `test:` Test additions or modifications
-- `chore:` Maintenance tasks
-
-Example: `feat: add quarterly funding trend analysis`
-
-### Pull Requests
-
-- Provide clear description of changes
-- Include data source citations when adding new data
-- Reference any related issues
-- Ensure all tests pass before merging
+- `test:` Test additions
+- `chore:` Maintenance
 
 ## Testing
 
-- Write tests for data processing functions
-- Validate data integrity after transformations
-- Test edge cases for Japanese text handling
-- Use pytest as the testing framework
-
-Run tests with:
 ```bash
 pytest tests/
 ```
 
-## Common Tasks
-
-### Adding New Data
-
-1. Place raw data in `data/raw/` with descriptive filename
-2. Create processing script in `src/` if needed
-3. Document data source, collection method, and date
-4. Save processed output to `data/processed/`
-
-### Running Analysis
-
-```bash
-# Activate virtual environment (if using)
-source venv/bin/activate
-
-# Run specific analysis
-python src/analysis/<script_name>.py
-
-# Run Jupyter notebooks
-jupyter notebook notebooks/
-```
-
-### Data Sources
-
-When working with this repository, common data sources include:
-- INITIAL (Japanese startup database)
-- STARTUP DB
-- Japan Venture Research (JVR)
-- Crunchbase (for international context)
-- Press releases and company announcements
-
-Always cite data sources and note access dates.
-
-## Key Dependencies
-
-Typical dependencies for this project type:
-- `pandas` - Data manipulation
-- `numpy` - Numerical operations
-- `matplotlib` / `seaborn` - Visualization
-- `requests` / `beautifulsoup4` - Web scraping
-- `jupyter` - Interactive notebooks
-- `pytest` - Testing
-
-Install dependencies:
-```bash
-pip install -r requirements.txt
-```
-
 ## AI Assistant Notes
 
-When working on this repository:
+### Important Considerations
 
-1. **Data Privacy**: Be cautious with personal information and company-sensitive data
-2. **Data Accuracy**: Verify financial figures and dates when possible
-3. **Cultural Context**: Understand Japanese business terminology and practices
-4. **Currency**: Default to JPY; convert and note exchange rates when comparing internationally
-5. **Date Handling**: Be aware of Japanese fiscal year (April-March) vs calendar year
-6. **Company Names**: Preserve original Japanese company names alongside translations
+1. **API Keys**: Never commit `.env` or expose API keys
+2. **Rate Limiting**: Scrapers have built-in delays (`settings.request_delay`)
+3. **Error Handling**: Each scraper handles errors independently
+4. **Japanese Text**: All text is UTF-8 encoded
 
-### Common Japanese Business Terms
+### Common Tasks
+
+**Debug scraping issues:**
+```python
+from src.scrapers import PRTimesScraper
+scraper = PRTimesScraper()
+articles = scraper.scrape()
+print(f"Found {len(articles)} articles")
+```
+
+**Test summarization:**
+```python
+from src.services.summarizer import SummarizerService
+summarizer = SummarizerService(api_key="...")
+summary = summarizer.summarize_article(article)
+```
+
+### Japanese Business Terms
 
 | Term | Meaning |
 |------|---------|
-| 資金調達 (shikin chōtatsu) | Fund raising |
-| M&A (エムアンドエー) | Mergers and Acquisitions |
+| 資金調達 | Fund raising |
+| M&A | Mergers and Acquisitions |
 | スタートアップ | Startup |
-| 投資 (tōshi) | Investment |
-| 上場 (jōjō) | IPO/Listing |
-| 買収 (baishū) | Acquisition |
-| 合併 (gappei) | Merger |
+| 投資 | Investment |
+| 上場 / IPO | IPO/Listing |
+| 買収 | Acquisition |
+| 合併 | Merger |
+| シリーズA/B/C | Series A/B/C funding |
 
 ## Status
 
-**Current State**: Repository initialized, awaiting data and analysis code.
+**Current State**: Fully implemented, ready for deployment
+
+### Implemented Features
+- [x] PR TIMES scraper
+- [x] TechCrunch Japan scraper (RSS)
+- [x] Nikkei scraper (partial - needs login implementation)
+- [x] NewsPicks scraper (partial - needs login implementation)
+- [x] INITIAL scraper
+- [x] Crunchbase API client
+- [x] Claude API summarization
+- [x] Resend email delivery
+- [x] GitHub Actions workflow
+- [x] HTML email template
+
+### TODO
+- [ ] Complete Nikkei/NewsPicks login flow
+- [ ] Add Pitchbook integration
+- [ ] Add STARTUP DB integration
+- [ ] Add unit tests
+- [ ] Add error notification (Slack)
 
 ---
 
